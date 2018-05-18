@@ -1,0 +1,7 @@
+[package]
+name = "neat-learning"
+version = "0.1.0"
+authors = ["Phlosioneer <mattmdrr2@gmail.com>"]
+
+[dependencies]
+rand = "0.4"
