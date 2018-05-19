@@ -2,9 +2,14 @@ use rand::Rng;
 use std::cmp::{self, Ordering};
 use std::slice;
 
+use Counter;
+
 type GenomeIter<'a> = slice::Iter<'a, ConnectionGene>;
 
 const CHANCE_TO_INHERIT_DISABLED: f64 = 0.75;
+const CHANCE_TO_MUTATE_WEIGHTS: f64 = 0.80;
+const CHANCE_TO_ADD_CONNECTION: f64 = 0.50;
+const CHANCE_TO_NUDGE_WEIGHT: f64 = 0.50;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConnectionGene {
@@ -13,6 +18,45 @@ pub struct ConnectionGene {
     pub weight: f64,
     pub enabled: bool,
     pub innovation: u64,
+}
+
+impl ConnectionGene {
+    pub fn mutate<R: Rng>(&self, mut rng: &mut R) -> ConnectionGene {
+        let mut ret = self.clone();
+
+        if rng.gen_range(0.0, 1.0) < CHANCE_TO_NUDGE_WEIGHT {
+            ret.weight += Self::new_weight(&mut rng) / 2.0;
+        } else {
+            ret.weight = Self::new_weight(&mut rng);
+        }
+
+        ret
+    }
+
+    pub fn new_weight<R: Rng>(rng: &mut R) -> f64 {
+        rng.gen_range(-1.0, 1.0)
+    }
+
+    pub fn crossover<R: Rng>(&self, other: &ConnectionGene, rng: &mut R) -> ConnectionGene {
+        let mut ret;
+        if rng.gen::<bool>() {
+            ret = self.clone();
+        } else {
+            ret = other.clone();
+        }
+
+        if !self.enabled || !other.enabled {
+            // 75% chance of being disabled if either parent is disabled.
+            // (that includes if they're both disabled! TODO: Remove that;
+            // if both parents agree, the child should keep that. Random
+            // disabled/enabled flips should be a separate mutation.)
+            ret.enabled = !(rng.gen_range(0.0, 1.0) < CHANCE_TO_INHERIT_DISABLED);
+        } else {
+            ret.enabled = true;
+        }
+
+        ret
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -52,11 +96,98 @@ impl Genome {
         self.genes.iter()
     }
 
+    pub fn get_nodes(&self) -> Vec<usize> {
+        let mut ret = Vec::new();
+        for gene in self.genes.iter() {
+            if !ret.contains(&gene.input_node) {
+                ret.push(gene.input_node);
+            }
+
+            if !ret.contains(&gene.output_node) {
+                ret.push(gene.output_node);
+            }
+        }
+
+        ret
+    }
+
+    pub fn mutate<R: Rng>(&self, mut rng: &mut R, mut counter: &mut Counter) -> Genome {
+        if rng.gen_range(0.0, 1.0) < CHANCE_TO_MUTATE_WEIGHTS {
+            self.mutate_change_weights(&mut rng)
+        } else {
+            if rng.gen_range(0.0, 1.0) < CHANCE_TO_ADD_CONNECTION {
+                self.mutate_add_connection(&mut rng, &mut counter)
+            } else {
+                self.mutate_add_node(&mut rng, &mut counter)
+            }
+        }
+    }
+
+    fn mutate_change_weights<R: Rng>(&self, mut rng: &mut R) -> Genome {
+        let mut ret = Genome::new();
+
+        for gene in self.genes.iter() {
+            ret.add(gene.mutate(&mut rng));
+        }
+
+        ret
+    }
+
+    fn mutate_add_connection<R: Rng>(&self, mut rng: &mut R, counter: &mut Counter) -> Genome {
+        let mut nodes = self.get_nodes();
+
+        let input_node = *rng.choose(&nodes).unwrap();
+        nodes.remove(input_node);
+
+        let output_node = *rng.choose(&nodes).unwrap();
+
+        let gene = ConnectionGene {
+            input_node,
+            output_node,
+            weight: ConnectionGene::new_weight(&mut rng),
+            enabled: true,
+            innovation: counter.next_innovation(),
+        };
+
+        let mut ret = Genome::from_genes(self.genes.clone());
+        ret.add(gene);
+
+        ret
+    }
+
+    fn mutate_add_node<R: Rng>(&self, rng: &mut R, counter: &mut Counter) -> Genome {
+        let mut ret_genes = self.genes.clone();
+
+        let new_gene;
+        {
+            let mut enabled_genes: Vec<_> =
+                ret_genes.iter_mut().filter(|gene| gene.enabled).collect();
+
+            let mut mutated_gene = rng.choose_mut(&mut enabled_genes).unwrap();
+
+            let new_node = counter.next_node();
+            new_gene = ConnectionGene {
+                input_node: new_node,
+                output_node: mutated_gene.output_node,
+                weight: 1.0,
+                enabled: true,
+                innovation: counter.next_innovation(),
+            };
+
+            mutated_gene.output_node = new_node;
+        }
+
+        let mut ret = Genome::from_genes(ret_genes);
+        ret.add(new_gene);
+
+        ret
+    }
+
     // Do a crossover mutation of the two genomes, where:
     //
     //      fitness(self) <ordering> fitness(other)
     //
-    pub fn crossover<R: Rng>(&self, other: &Genome, order: Ordering, rng: &mut R) -> Genome {
+    pub fn crossover<R: Rng>(&self, other: &Genome, order: Ordering, mut rng: &mut R) -> Genome {
         let max_len = cmp::max(self.len(), other.len());
 
         let mut ret = Genome::new();
@@ -65,23 +196,7 @@ impl Genome {
             println!("Match: {:?} Ordering: {:?}", gene_match, order);
             match gene_match {
                 GeneMatch::Pair(self_gene, other_gene) => {
-                    let mut gene;
-                    if rng.gen::<bool>() {
-                        gene = self_gene.clone();
-                    } else {
-                        gene = other_gene.clone();
-                    }
-
-                    if !self_gene.enabled || !other_gene.enabled {
-                        // 75% chance of being disabled if either parent is disabled.
-                        // (that includes if they're both disabled! TODO: Remove that;
-                        // if both parents agree, the child should keep that. Random
-                        // disabled/enabled flips should be a separate mutation.)
-                        gene.enabled = !(rng.gen_range(0.0, 1.0) < CHANCE_TO_INHERIT_DISABLED);
-                    } else {
-                        gene.enabled = true;
-                    }
-
+                    let gene = self_gene.crossover(other_gene, &mut rng);
                     ret.add(gene);
                 }
                 GeneMatch::DisjointFirst(gene) => match order {
