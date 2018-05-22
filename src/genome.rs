@@ -3,7 +3,7 @@ use rand::Rng;
 use std::cmp::Ordering;
 use std::slice;
 
-use Counter;
+use population::Counter;
 
 type GenomeIter<'a> = slice::Iter<'a, ConnectionGene>;
 
@@ -142,12 +142,14 @@ impl Genome {
 
         let output_node = *rng.choose(&nodes).unwrap();
 
+        let innovation = counter.new_connection(input_node, output_node);
+
         let gene = ConnectionGene {
             input_node,
             output_node,
             weight: ConnectionGene::new_weight(&mut rng),
             enabled: true,
-            innovation: counter.next_innovation(),
+            innovation,
         };
 
         let mut ret = Genome::from_genes(self.genes.clone());
@@ -166,13 +168,15 @@ impl Genome {
 
             let mutated_gene = rng.choose_mut(&mut enabled_genes).unwrap();
 
-            let new_node = counter.next_node();
+            let (innovation, new_node) =
+                counter.new_split(mutated_gene.input_node, mutated_gene.output_node);
+
             new_gene = ConnectionGene {
                 input_node: new_node,
                 output_node: mutated_gene.output_node,
                 weight: 1.0,
                 enabled: true,
-                innovation: counter.next_innovation(),
+                innovation,
             };
 
             mutated_gene.output_node = new_node;
