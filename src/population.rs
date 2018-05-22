@@ -1,4 +1,4 @@
-use genome::{ConnectionGene, Genome};
+use genome::Genome;
 use rand::Rng;
 use std::collections::HashMap;
 use Environment;
