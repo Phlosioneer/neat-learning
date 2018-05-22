@@ -1,5 +1,6 @@
+use itertools::{EitherOrBoth, Itertools};
 use rand::Rng;
-use std::cmp::{self, Ordering};
+use std::cmp::Ordering;
 use std::slice;
 
 use Counter;
@@ -163,7 +164,7 @@ impl Genome {
             let mut enabled_genes: Vec<_> =
                 ret_genes.iter_mut().filter(|gene| gene.enabled).collect();
 
-            let mut mutated_gene = rng.choose_mut(&mut enabled_genes).unwrap();
+            let mutated_gene = rng.choose_mut(&mut enabled_genes).unwrap();
 
             let new_node = counter.next_node();
             new_gene = ConnectionGene {
@@ -188,12 +189,9 @@ impl Genome {
     //      fitness(self) <ordering> fitness(other)
     //
     pub fn crossover<R: Rng>(&self, other: &Genome, order: Ordering, mut rng: &mut R) -> Genome {
-        let max_len = cmp::max(self.len(), other.len());
-
         let mut ret = Genome::new();
 
         for gene_match in CrossIter::new(&self, &other) {
-            println!("Match: {:?} Ordering: {:?}", gene_match, order);
             match gene_match {
                 GeneMatch::Pair(self_gene, other_gene) => {
                     let gene = self_gene.crossover(other_gene, &mut rng);
@@ -223,6 +221,64 @@ impl Genome {
         }
 
         ret
+    }
+
+    pub fn new_random<R: Rng>(
+        mut rng: &mut R,
+        counter: &mut Counter,
+        input_count: usize,
+        output_count: usize,
+    ) -> Genome {
+        // We need to supply at least enough connections to define each input
+        // and output node.
+        //
+        // This code sets up a pair of iterators over the possible input node
+        // id's and output node id's in a random order. Then, it zips them together,
+        // and uses the zipped pairs as connection values. This will uniquely connect
+        // an input and an output.
+        //
+        // Any excess (because the inputs and outputs are a different size) are
+        // chosen randomly from the appropriate input/output ids.
+        //
+        // This process ensures that each input and output have been used at least
+        // once, and that the minimum number of connections are made.
+        let mut inputs: Vec<usize> = (0..input_count).collect();
+        let mut outputs: Vec<usize> = (0..output_count).map(|x| x + input_count).collect();
+
+        let remainder = if inputs > outputs {
+            inputs.clone()
+        } else {
+            outputs.clone()
+        };
+
+        rng.shuffle(&mut inputs);
+        rng.shuffle(&mut outputs);
+
+        let mut genes = Vec::new();
+        for zip in inputs.into_iter().zip_longest(outputs.into_iter()) {
+            let (input, output) = match zip {
+                EitherOrBoth::Both(input, output) => (input, output),
+                EitherOrBoth::Left(input) => (input, *rng.choose(&remainder).unwrap()),
+                EitherOrBoth::Right(output) => (*rng.choose(&remainder).unwrap(), output),
+            };
+
+            // If two genomes would make a new connection between the same two
+            // nodes during an evolution step, they must share the same innovation
+            // number.
+            let innovation = counter.new_connection(input, output);
+
+            let gene = ConnectionGene {
+                input_node: input,
+                output_node: output,
+                weight: ConnectionGene::new_weight(&mut rng),
+                enabled: true,
+                innovation,
+            };
+
+            genes.push(gene);
+        }
+
+        Genome::from_genes(genes)
     }
 }
 
@@ -299,7 +355,9 @@ impl<'a> Iterator for CrossIter<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand::{SeedableRng, XorShiftRng};
+    use rand::XorShiftRng;
+    use std::cmp;
+    use util::test_util;
 
     #[test]
     fn test_from_genes() {
@@ -349,6 +407,73 @@ mod test {
     }
 
     #[test]
+    fn test_get_nodes() {
+        let (genes, _, _) = paper_crossover_example();
+
+        let genome = Genome::from_genes(genes);
+        let nodes = genome.get_nodes();
+
+        for i in 1..6 {
+            assert!(nodes.contains(&i), "Node id not found: {}", i);
+        }
+
+        assert!(nodes.contains(&8), "Node id not found: 8");
+
+        assert_eq!(nodes.len(), 6);
+    }
+
+    #[test]
+    fn test_add_node() {
+        let (test1, test2, test3) = paper_crossover_example();
+
+        let mut rng = test_util::new_rng(None);
+
+        do_test_add_mutation(test1, &mut rng, true);
+        do_test_add_mutation(test2, &mut rng, true);
+        do_test_add_mutation(test3, &mut rng, true);
+    }
+
+    #[test]
+    fn test_add_connection() {
+        let (test1, test2, test3) = paper_crossover_example();
+
+        let mut rng = test_util::new_rng(Some(212));
+
+        do_test_add_mutation(test1, &mut rng, false);
+        do_test_add_mutation(test2, &mut rng, false);
+        do_test_add_mutation(test3, &mut rng, false);
+    }
+
+    fn do_test_add_mutation(
+        test_genes: Vec<ConnectionGene>,
+        mut rng: &mut XorShiftRng,
+        new_node: bool,
+    ) {
+        let genome = Genome::from_genes(test_genes);
+        let node_count = genome.get_nodes().len();
+        let connection_count = genome.len();
+
+        let mut dummy_counter = Counter::from_id(100);
+
+        let new_genome = if new_node {
+            genome.mutate_add_node(&mut rng, &mut dummy_counter)
+        } else {
+            genome.mutate_add_connection(&mut rng, &mut dummy_counter)
+        };
+
+        let new_node_count = new_genome.get_nodes().len();
+        let new_connection_count = new_genome.len();
+
+        if new_node {
+            assert_eq!(new_node_count, node_count + 1);
+            assert!(new_genome.get_nodes().contains(&100));
+        } else {
+            assert_eq!(new_node_count, node_count);
+        }
+        assert_eq!(new_connection_count, connection_count + 1);
+    }
+
+    #[test]
     fn test_crossover() {
         let (in1, in2, out) = paper_crossover_example();
 
@@ -373,10 +498,11 @@ mod test {
             &in1, &in2, &out, order
         );
 
+        let mut rng = test_util::new_rng(None);
+
         let genome1 = Genome::from_genes(in1.clone());
         let genome2 = Genome::from_genes(in2.clone());
-        let mut dummy_rand = XorShiftRng::from_seed([1, 1, 1, 1]);
-        let output_genome = genome1.crossover(&genome2, order, &mut dummy_rand);
+        let output_genome = genome1.crossover(&genome2, order, &mut rng);
 
         assert_eq!(output_genome.get_genes(), &out);
     }
@@ -399,7 +525,7 @@ mod test {
             innovation: 1,
         }];
 
-        let mut rng = XorShiftRng::from_seed([1, 1, 1, 1]);
+        let mut rng = test_util::new_rng(None);
 
         do_test_random_choice_of_enabled(&in1, &in2, &mut rng);
         do_test_random_choice_of_enabled(&in2, &in1, &mut rng);
@@ -436,6 +562,56 @@ mod test {
             true_output_found,
             false_output_found
         );
+    }
+
+    // This ensures the random genomes have the absolute minimum number of connections
+    // required to define every input/output node id.
+    #[test]
+    fn test_new_random_minimum_length() {
+        let mut rng = test_util::new_rng(None);
+
+        for inputs in 1..10 {
+            for outputs in 1..10 {
+                println!("Testing {} inputs and {} outputs.", inputs, outputs);
+                let minimum_length = cmp::max(inputs, outputs);
+
+                let mut counter = Counter::new();
+                let genome = Genome::new_random(&mut rng, &mut counter, inputs, outputs);
+
+                assert_eq!(
+                    genome.len(),
+                    minimum_length,
+                    "Genome is not minimal: {:#?}",
+                    genome
+                );
+            }
+        }
+    }
+
+    // This ensures the random genomes define every input/output node id.
+    #[test]
+    fn test_new_random_node_ids() {
+        let mut rng = test_util::new_rng(None);
+
+        for inputs in 1..10 {
+            for outputs in 1..10 {
+                println!("Testing {} inputs and {} outputs.", inputs, outputs);
+
+                let mut counter = Counter::new();
+                let genome = Genome::new_random(&mut rng, &mut counter, inputs, outputs);
+
+                let nodes = genome.get_nodes();
+
+                for id in 0..(inputs + outputs) {
+                    assert!(
+                        nodes.contains(&id),
+                        "Id {} not found in genome: {:#?}",
+                        id,
+                        genome
+                    );
+                }
+            }
+        }
     }
 
     // This is the same example the paper uses on p109, but gene #5 is not disabled
