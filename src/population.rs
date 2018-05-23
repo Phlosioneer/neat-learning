@@ -139,7 +139,7 @@ impl<R: Rng> Population<R> {
         self.counter.clear_innovations();
         for _ in 0..self.max_size {
             let member =
-                Genome::new_random(&mut self.rng, &mut self.counter, input_count, output_count);
+                E::random_genome(&mut self.rng, &mut self.counter, input_count, output_count);
             self.members.push(member);
         }
         self.counter.clear_innovations();
@@ -161,36 +161,15 @@ impl<R: Rng> Population<R> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand::XorShiftRng;
     use util::test_util;
-    use {FitnessType, Organism};
-
-    struct TestEnv;
-
-    impl Environment for TestEnv {
-        fn input_count(&self) -> usize {
-            10
-        }
-
-        fn output_count(&self) -> usize {
-            4
-        }
-
-        fn fitness_type() -> FitnessType {
-            panic!()
-        }
-
-        fn calc_fitness(&self, _: &Organism) -> f64 {
-            panic!()
-        }
-    }
+    use NetworkEnv;
 
     #[test]
     pub fn test_initialize_makes_max_size() {
         let rng = test_util::new_rng(None);
 
         let mut pop = Population::new(150, rng);
-        pop.initialize(&mut TestEnv);
+        pop.initialize(&mut NetworkEnv);
 
         assert_eq!(pop.len(), 150);
     }

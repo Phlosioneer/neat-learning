@@ -1,4 +1,3 @@
-use itertools::{EitherOrBoth, Itertools};
 use rand::Rng;
 use std::cmp::Ordering;
 use std::slice;
@@ -22,16 +21,24 @@ pub struct ConnectionGene {
 }
 
 impl ConnectionGene {
-    pub fn mutate<R: Rng>(&self, mut rng: &mut R, mut counter: &mut Counter, parent: &Genome) -> Vec<ConnectionGene> {
+    pub fn mutate<R: Rng>(
+        &self,
+        mut rng: &mut R,
+        mut counter: &mut Counter,
+        parent: &Genome,
+    ) -> Vec<ConnectionGene> {
         if !self.enabled {
-            return Vec::new()
+            return Vec::new();
         }
 
         if rng.gen_range(0.0, 1.0) < CHANCE_TO_MUTATE_WEIGHTS {
             vec![self.mutate_change_weight(&mut rng)]
         } else {
             if rng.gen_range(0.0, 1.0) < CHANCE_TO_ADD_CONNECTION {
-                vec![self.clone(), Self::mutate_add_connection(&mut rng, &mut counter, &parent)]
+                vec![
+                    self.clone(),
+                    Self::mutate_add_connection(&mut rng, &mut counter, &parent),
+                ]
             } else {
                 self.mutate_add_node(&mut counter)
             }
@@ -49,8 +56,12 @@ impl ConnectionGene {
 
         ret
     }
-    
-    fn mutate_add_connection<R: Rng>(mut rng: &mut R, counter: &mut Counter, parent: &Genome) -> ConnectionGene {
+
+    fn mutate_add_connection<R: Rng>(
+        mut rng: &mut R,
+        counter: &mut Counter,
+        parent: &Genome,
+    ) -> ConnectionGene {
         let mut nodes = parent.get_nodes();
 
         let input_node_index = rng.gen_range(0, nodes.len());
@@ -68,10 +79,9 @@ impl ConnectionGene {
             innovation,
         }
     }
-    
+
     fn mutate_add_node(&self, counter: &mut Counter) -> Vec<ConnectionGene> {
-        let (innovation, new_node) =
-            counter.new_split(self.input_node, self.output_node);
+        let (innovation, new_node) = counter.new_split(self.input_node, self.output_node);
 
         let new_gene = ConnectionGene {
             input_node: new_node,
@@ -86,7 +96,7 @@ impl ConnectionGene {
             output_node: new_node,
             weight: self.weight,
             enabled: true,
-            innovation: self.innovation
+            innovation: self.innovation,
         };
 
         vec![old_gene, new_gene]
@@ -173,11 +183,11 @@ impl Genome {
     // TODO: Test this.
     pub fn mutate<R: Rng>(&self, mut rng: &mut R, mut counter: &mut Counter) -> Genome {
         let mut copied_genes = self.genes.clone();
-        
+
         let gene_index = rng.gen_range(0, self.genes.len());
         let old_gene: ConnectionGene = copied_genes.remove(gene_index);
         let mutated_genes: Vec<ConnectionGene> = old_gene.mutate(&mut rng, &mut counter, &self);
-        
+
         copied_genes.extend(mutated_genes);
         Genome::from_genes(copied_genes)
     }
@@ -219,64 +229,6 @@ impl Genome {
         }
 
         ret
-    }
-
-    pub fn new_random<R: Rng>(
-        mut rng: &mut R,
-        counter: &mut Counter,
-        input_count: usize,
-        output_count: usize,
-    ) -> Genome {
-        // We need to supply at least enough connections to define each input
-        // and output node.
-        //
-        // This code sets up a pair of iterators over the possible input node
-        // id's and output node id's in a random order. Then, it zips them together,
-        // and uses the zipped pairs as connection values. This will uniquely connect
-        // an input and an output.
-        //
-        // Any excess (because the inputs and outputs are a different size) are
-        // chosen randomly from the appropriate input/output ids.
-        //
-        // This process ensures that each input and output have been used at least
-        // once, and that the minimum number of connections are made.
-        let mut inputs: Vec<usize> = (0..input_count).collect();
-        let mut outputs: Vec<usize> = (0..output_count).map(|x| x + input_count).collect();
-
-        let remainder = if inputs > outputs {
-            inputs.clone()
-        } else {
-            outputs.clone()
-        };
-
-        rng.shuffle(&mut inputs);
-        rng.shuffle(&mut outputs);
-
-        let mut genes = Vec::new();
-        for zip in inputs.into_iter().zip_longest(outputs.into_iter()) {
-            let (input, output) = match zip {
-                EitherOrBoth::Both(input, output) => (input, output),
-                EitherOrBoth::Left(input) => (input, *rng.choose(&remainder).unwrap()),
-                EitherOrBoth::Right(output) => (*rng.choose(&remainder).unwrap(), output),
-            };
-
-            // If two genomes would make a new connection between the same two
-            // nodes during an evolution step, they must share the same innovation
-            // number.
-            let innovation = counter.new_connection(input, output);
-
-            let gene = ConnectionGene {
-                input_node: input,
-                output_node: output,
-                weight: ConnectionGene::new_weight(&mut rng),
-                enabled: true,
-                innovation,
-            };
-
-            genes.push(gene);
-        }
-
-        Genome::from_genes(genes)
     }
 }
 
@@ -354,7 +306,6 @@ impl<'a> Iterator for CrossIter<'a> {
 mod test {
     use super::*;
     use rand::XorShiftRng;
-    use std::cmp;
     use util::test_util;
 
     #[test]
@@ -430,8 +381,6 @@ mod test {
     }
 
     fn do_test_add_node(test_genes: Vec<ConnectionGene>) {
-        let parent = Genome::from_genes(test_genes.clone());
-
         for gene in test_genes {
             println!("Testing gene: {:#?}", gene);
             let mut counter = Counter::from_id(100);
@@ -455,18 +404,42 @@ mod test {
                 panic!("The genes don't have any inputs/outputs in common");
             }
 
-            assert_eq!(start.input_node, gene.input_node, "Input node doesn't match.");
-            assert_eq!(end.output_node, gene.output_node, "Output node doesn't match.");
+            assert_eq!(
+                start.input_node, gene.input_node,
+                "Input node doesn't match."
+            );
+            assert_eq!(
+                end.output_node, gene.output_node,
+                "Output node doesn't match."
+            );
             assert_eq!(start.enabled && end.enabled, true, "A node is disabled.");
             assert_eq!(start.output_node, 100, "The new node must have a new id.");
             if start.weight == 1.0 {
-                assert_eq!(end.weight, gene.weight, "Original weight was not preserved.");
-                assert_eq!(end.innovation, gene.innovation, "Original innovation was not preserved or is backwards.");
-                assert_eq!(start.innovation, 100, "One of the nodes must be a new innovation number.");
+                assert_eq!(
+                    end.weight, gene.weight,
+                    "Original weight was not preserved."
+                );
+                assert_eq!(
+                    end.innovation, gene.innovation,
+                    "Original innovation was not preserved or is backwards."
+                );
+                assert_eq!(
+                    start.innovation, 100,
+                    "One of the nodes must be a new innovation number."
+                );
             } else if end.weight == 1.0 {
-                assert_eq!(start.weight, gene.weight, "Original weight was not preserved.");
-                assert_eq!(start.innovation, gene.innovation, "Original innovation was not preserved or is backwards.");
-                assert_eq!(end.innovation, 100, "One of the nodes must be a new innovation number.");
+                assert_eq!(
+                    start.weight, gene.weight,
+                    "Original weight was not preserved."
+                );
+                assert_eq!(
+                    start.innovation, gene.innovation,
+                    "Original innovation was not preserved or is backwards."
+                );
+                assert_eq!(
+                    end.innovation, 100,
+                    "One of the nodes must be a new innovation number."
+                );
             } else {
                 panic!("At least one connection must have a weight of 1.0");
             }
@@ -484,23 +457,32 @@ mod test {
         do_test_add_connection(test3, &mut rng);
     }
 
-    fn do_test_add_connection(
-        test_genome: Vec<ConnectionGene>,
-        mut rng: &mut XorShiftRng,
-    ) {
+    fn do_test_add_connection(test_genome: Vec<ConnectionGene>, mut rng: &mut XorShiftRng) {
         let parent = Genome::from_genes(test_genome);
         let nodes = parent.get_nodes();
 
-        for _ in 0 .. 100 {
+        for _ in 0..100 {
             let mut counter = Counter::from_id(100);
-            let output_gene = ConnectionGene::mutate_add_connection(&mut rng, &mut counter, &parent);
+            let output_gene =
+                ConnectionGene::mutate_add_connection(&mut rng, &mut counter, &parent);
             println!("output gene: {:#?}\n", output_gene);
-            
-            assert!(nodes.contains(&output_gene.input_node), "Input node ID doesn't exist. Node ids: {:?}", nodes);
-            assert!(nodes.contains(&output_gene.output_node), "Output node ID doesn't exist. Node ids: {:?}", nodes);
-            
+
+            assert!(
+                nodes.contains(&output_gene.input_node),
+                "Input node ID doesn't exist. Node ids: {:?}",
+                nodes
+            );
+            assert!(
+                nodes.contains(&output_gene.output_node),
+                "Output node ID doesn't exist. Node ids: {:?}",
+                nodes
+            );
+
             assert_eq!(output_gene.enabled, true, "Output gene is disabled.");
-            assert_eq!(output_gene.innovation, 100, "Output gene has incorrect innovation number (expected 100)");
+            assert_eq!(
+                output_gene.innovation, 100,
+                "Output gene has incorrect innovation number (expected 100)"
+            );
         }
     }
 
@@ -593,56 +575,6 @@ mod test {
             true_output_found,
             false_output_found
         );
-    }
-
-    // This ensures the random genomes have the absolute minimum number of connections
-    // required to define every input/output node id.
-    #[test]
-    fn test_new_random_minimum_length() {
-        let mut rng = test_util::new_rng(None);
-
-        for inputs in 1..10 {
-            for outputs in 1..10 {
-                println!("Testing {} inputs and {} outputs.", inputs, outputs);
-                let minimum_length = cmp::max(inputs, outputs);
-
-                let mut counter = Counter::new();
-                let genome = Genome::new_random(&mut rng, &mut counter, inputs, outputs);
-
-                assert_eq!(
-                    genome.len(),
-                    minimum_length,
-                    "Genome is not minimal: {:#?}",
-                    genome
-                );
-            }
-        }
-    }
-
-    // This ensures the random genomes define every input/output node id.
-    #[test]
-    fn test_new_random_node_ids() {
-        let mut rng = test_util::new_rng(None);
-
-        for inputs in 1..10 {
-            for outputs in 1..10 {
-                println!("Testing {} inputs and {} outputs.", inputs, outputs);
-
-                let mut counter = Counter::new();
-                let genome = Genome::new_random(&mut rng, &mut counter, inputs, outputs);
-
-                let nodes = genome.get_nodes();
-
-                for id in 0..(inputs + outputs) {
-                    assert!(
-                        nodes.contains(&id),
-                        "Id {} not found in genome: {:#?}",
-                        id,
-                        genome
-                    );
-                }
-            }
-        }
     }
 
     // This is the same example the paper uses on p109, but gene #5 is not disabled
