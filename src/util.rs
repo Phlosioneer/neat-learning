@@ -17,7 +17,7 @@ Don't forget to put the None back when you're done!
             seed
         );
 
-        XorShiftRng::from_seed([seed.into(), 0, 0, 0])
+        XorShiftRng::from_seed([seed.into(), 1, 1, 1])
     }
 
 }
