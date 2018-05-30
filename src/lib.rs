@@ -4,11 +4,13 @@ extern crate rand;
 pub mod genome;
 pub mod population;
 pub mod util;
+pub mod perceptron;
 
 use genome::{ConnectionGene, Genome};
 use itertools::{EitherOrBoth, Itertools};
 use population::Counter;
 use rand::Rng;
+use perceptron::NeuralNetwork;
 
 pub struct Organism {
     genes: Genome,
@@ -39,8 +41,6 @@ pub trait Environment {
         output_count: usize,
     ) -> Genome;
 }
-
-pub struct NeuralNetwork {}
 
 pub struct NetworkEnv;
 
