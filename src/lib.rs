@@ -1,5 +1,6 @@
 extern crate itertools;
 extern crate rand;
+extern crate petgraph;
 
 pub mod genome;
 pub mod population;

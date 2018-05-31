@@ -6,3 +6,4 @@ authors = ["Phlosioneer <mattmdrr2@gmail.com>"]
 [dependencies]
 rand = "0.4"
 itertools = "0.7"
+petgraph = "0.4"
